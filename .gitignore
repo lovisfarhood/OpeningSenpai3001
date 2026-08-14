@@ -30,5 +30,5 @@ __MACOSX/
 
 # Local raw-export staging and interrupted atomic imports
 # Personal course files must never be committed to the public app repository.
-data/
+/data/
 *.course.zip
