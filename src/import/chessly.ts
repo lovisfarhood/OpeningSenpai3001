@@ -41,7 +41,7 @@ export const ZIP_IMPORT_LIMITS = {
   compressedBytes: 25 * 1024 * 1024,
   entryBytes: 10 * 1024 * 1024,
   totalExpandedBytes: 50 * 1024 * 1024,
-  entries: 2_000,
+  entries: 3_000,
 } as const;
 
 interface NormalizedEntry extends ImportFileEntry {
