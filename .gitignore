@@ -1,0 +1,34 @@
+# Dependencies and build output
+node_modules/
+dist/
+coverage/
+.vite/
+*.tsbuildinfo
+
+# Browser and test artifacts
+playwright-report/
+test-results/
+blob-report/
+*.tmp
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local environment and editor files
+.env
+.env.*
+!.env.example
+*.local
+.idea/
+.vscode/
+
+# Operating-system and archive metadata
+.DS_Store
+__MACOSX/
+
+# Local raw-export staging and interrupted atomic imports
+# Personal course files must never be committed to the public app repository.
+data/
+*.course.zip

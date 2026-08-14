@@ -1,0 +1,16 @@
+export const ENGLISH = {
+  chooseOpening: 'Choose an opening',
+  libraryIntro: 'Select a repertoire to explore in Book Mode or train in Practice Mode.',
+  bookMode: 'Book Mode',
+  practiceMode: 'Practice Mode',
+  repertoireSide: 'Repertoire side',
+  studies: 'Studies',
+  decisions: 'Repertoire decisions',
+  maximumDepth: 'Maximum depth',
+  dataStatus: 'Data status',
+  backToLibrary: 'Back to library',
+  loadingLibrary: 'Loading opening library…',
+  loadingOpening: 'Loading opening…',
+  libraryError: 'The opening library could not be loaded.',
+  openingError: 'The opening could not be loaded.',
+} as const;

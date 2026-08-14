@@ -1,0 +1,32 @@
+{
+  "name": "Interactive ChessBook",
+  "short_name": "ChessBook",
+  "id": "./",
+  "description": "Personal opening book, practice system and repertoire explorer.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#101716",
+  "theme_color": "#153b2f",
+  "categories": ["education", "games"],
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
