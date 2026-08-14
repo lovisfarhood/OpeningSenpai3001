@@ -4,7 +4,10 @@ import { Chess } from 'chess.js';
 import { describe, expect, it } from 'vitest';
 
 import { START_FEN } from '../../src/domain/repertoire.js';
-import { buildCoursePackFromBrowserFiles } from '../../src/import/course-pack.js';
+import {
+  buildCoursePackFromBrowserFiles,
+  buildCoursePacksFromBrowserFiles,
+} from '../../src/import/course-pack.js';
 import type { BrowserImportFile } from '../../src/import/types.js';
 import { CoursePackRepository } from '../../src/storage/course-packs.js';
 import { databaseName } from '../storage/test-utils.js';
@@ -21,7 +24,10 @@ function importedFile(
   return file;
 }
 
-function fixtureFiles(): BrowserImportFile[] {
+function fixtureFiles(
+  courseFolder = 'fixture-course',
+  courseTitle = 'My Private Course',
+): BrowserImportFile[] {
   const first = new Chess(START_FEN);
   const white = first.move('e4', { strict: true });
   const afterWhite = first.fen().split(' ');
@@ -54,13 +60,13 @@ function fixtureFiles(): BrowserImportFile[] {
       },
     ],
   };
-  const base = 'Fixture-Course/01_Study';
+  const base = `${courseFolder}/01_Study`;
   return [
     importedFile(`${base}/moves.json`, JSON.stringify(moves)),
     importedFile(`${base}/comments.json`, '{}'),
     importedFile(
       `${base}/info.md`,
-      '# First Study\n\n- Kurs: My Private Course\n- Kapitel: Start\n- Study: First Study\n',
+      `# First Study\n\n- Kurs: ${courseTitle}\n- Kapitel: Start\n- Study: First Study\n`,
     ),
   ];
 }
@@ -72,10 +78,10 @@ describe('private browser course packs', () => {
       'white',
     );
     expect(pack.index).toMatchObject({
-      id: 'my-private-course',
+      id: 'fixture-course',
       title: 'My Private Course',
       repertoireSide: 'white',
-      processedFile: 'local:my-private-course',
+      processedFile: 'local:fixture-course',
       availableModes: ['book', 'practice', 'explorer'],
     });
     expect(pack.repertoire.summary.canonicalEdges).toBe(2);
@@ -86,11 +92,29 @@ describe('private browser course packs', () => {
     });
     await repository.save(pack.index, pack.repertoire);
     expect((await repository.list()).map((item) => item.id)).toEqual([
-      'my-private-course',
+      'fixture-course',
     ]);
-    expect((await repository.get('my-private-course'))?.repertoire.title).toBe(
+    expect((await repository.get('fixture-course'))?.repertoire.title).toBe(
       'My Private Course',
     );
     await repository.close();
+  });
+
+  it('splits a complete chessly folder and assigns known course sides', async () => {
+    const packs = await buildCoursePacksFromBrowserFiles(
+      [
+        ...fixtureFiles('vienna-game', '1.e4 Part 1: The Vienna'),
+        ...fixtureFiles('caro-kann', 'Caro-Kann Defense'),
+      ],
+      'white',
+    );
+    expect(
+      packs
+        .map((pack) => [pack.index.id, pack.index.repertoireSide])
+        .sort(),
+    ).toEqual([
+      ['caro-kann', 'black'],
+      ['vienna-game', 'white'],
+    ]);
   });
 });

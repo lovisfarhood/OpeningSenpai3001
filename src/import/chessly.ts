@@ -843,40 +843,8 @@ export function parseChesslyZip(
   options: ChesslyImportOptions = {},
   path = 'import.zip',
 ): ValidatedImportPackage {
-  const bytes = toUint8Array(content);
-  if (bytes.byteLength > ZIP_IMPORT_LIMITS.compressedBytes) {
-    return invalidPackage(
-      path,
-      'invalid-zip',
-      `ZIP ist größer als ${ZIP_IMPORT_LIMITS.compressedBytes} Bytes.`,
-      options.existingRepertoire,
-    );
-  }
-
-  let entryCount = 0;
-  let expandedBytes = 0;
   try {
-    const files = unzipSync(bytes, {
-      filter: (entry) => {
-        entryCount += 1;
-        expandedBytes += entry.originalSize;
-        if (
-          entryCount > ZIP_IMPORT_LIMITS.entries ||
-          entry.originalSize > ZIP_IMPORT_LIMITS.entryBytes ||
-          expandedBytes > ZIP_IMPORT_LIMITS.totalExpandedBytes
-        ) {
-          throw new Error('ZIP überschreitet die sicheren Importgrenzen.');
-        }
-        return !entry.name.endsWith('/');
-      },
-    });
-    const entries = Object.entries(files).map(
-      ([entryPath, entryContent]): ImportFileEntry => ({
-        path: entryPath,
-        content: entryContent,
-      }),
-    );
-    return parseChesslyFiles(entries, options);
+    return parseChesslyFiles(extractChesslyZipEntries(content), options);
   } catch (error) {
     return invalidPackage(
       path,
@@ -887,15 +855,54 @@ export function parseChesslyZip(
   }
 }
 
+export function extractChesslyZipEntries(
+  content: Uint8Array | ArrayBuffer,
+): ImportFileEntry[] {
+  const bytes = toUint8Array(content);
+  if (bytes.byteLength > ZIP_IMPORT_LIMITS.compressedBytes) {
+    throw new Error(
+      `ZIP ist größer als ${ZIP_IMPORT_LIMITS.compressedBytes} Bytes.`,
+    );
+  }
+
+  let entryCount = 0;
+  let expandedBytes = 0;
+  const files = unzipSync(bytes, {
+    filter: (entry) => {
+      entryCount += 1;
+      expandedBytes += entry.originalSize;
+      if (
+        entryCount > ZIP_IMPORT_LIMITS.entries ||
+        entry.originalSize > ZIP_IMPORT_LIMITS.entryBytes ||
+        expandedBytes > ZIP_IMPORT_LIMITS.totalExpandedBytes
+      ) {
+        throw new Error('ZIP überschreitet die sicheren Importgrenzen.');
+      }
+      return !entry.name.endsWith('/');
+    },
+  });
+  return Object.entries(files).map(
+    ([entryPath, entryContent]): ImportFileEntry => ({
+      path: entryPath,
+      content: entryContent,
+    }),
+  );
+}
+
 export async function parseChesslyBrowserFiles(
   files: readonly BrowserImportFile[],
   options: ChesslyImportOptions = {},
 ): Promise<ValidatedImportPackage> {
-  const entries = await Promise.all(
+  return parseChesslyFiles(await chesslyBrowserEntries(files), options);
+}
+
+export async function chesslyBrowserEntries(
+  files: readonly BrowserImportFile[],
+): Promise<ImportFileEntry[]> {
+  return Promise.all(
     files.map(async (file): Promise<ImportFileEntry> => ({
       path: file.webkitRelativePath || file.name,
       content: await file.arrayBuffer(),
     })),
   );
-  return parseChesslyFiles(entries, options);
 }

@@ -70,7 +70,7 @@ import {
   type SessionState,
 } from './domain/session.js';
 import {
-  buildCoursePackFromBrowserFiles,
+  buildCoursePacksFromBrowserFiles,
   importPackageToLocalAdditions,
   parseBrowserImportFiles,
   type BrowserImportFile,
@@ -1602,17 +1602,24 @@ export default function App() {
     setCourseImportError(null);
     setCourseImportNotice(null);
     try {
-      const pack = await buildCoursePackFromBrowserFiles(
+      const packs = await buildCoursePacksFromBrowserFiles(
         files,
         courseImportSide,
       );
-      await coursePacks.save(pack.index, pack.repertoire);
-      repertoireCache.current.set(pack.index.processedFile, pack.repertoire);
+      for (const pack of packs) {
+        await coursePacks.save(pack.index, pack.repertoire);
+        repertoireCache.current.set(pack.index.processedFile, pack.repertoire);
+      }
+      const importedIds = new Set(packs.map((pack) => pack.index.id));
       setOpenings((current) => [
-        ...(current ?? []).filter((opening) => opening.id !== pack.index.id),
-        pack.index,
+        ...(current ?? []).filter((opening) => !importedIds.has(opening.id)),
+        ...packs.map((pack) => pack.index),
       ].sort(compareOpeningTitles));
-      setCourseImportNotice(`${pack.index.title} wurde nur auf diesem Gerät gespeichert.`);
+      setCourseImportNotice(
+        packs.length === 1
+          ? `${packs[0]?.index.title} wurde nur auf diesem Gerät gespeichert.`
+          : `${packs.length} Kurse wurden nur auf diesem Gerät gespeichert.`,
+      );
       setSearch('');
       setLibraryFilter('all');
     } catch (reason) {
@@ -1819,12 +1826,12 @@ export default function App() {
             <p className="eyebrow">Private Kursbibliothek</p>
             <h2>Eigenen Chessly-Kurs hinzufügen</h2>
             <p>
-              Der Kurs bleibt ausschließlich im Browser auf diesem Gerät und
-              wird nicht zum Server hochgeladen.
+              Einzelnen Kurs oder kompletten chessly-Ordner/ZIP wählen. Die
+              Kurse bleiben ausschließlich im Browser auf diesem Gerät.
             </p>
           </div>
           <fieldset>
-            <legend>Ich spiele im Kurs</legend>
+            <legend>Beim Import eines einzelnen Kurses spiele ich</legend>
             <button
               type="button"
               aria-pressed={courseImportSide === 'white'}
@@ -1846,7 +1853,7 @@ export default function App() {
               disabled={courseImportBusy}
               onClick={() => courseZipRef.current?.click()}
             >
-              Kurs-ZIP wählen
+              Kurs-ZIP wählen (einzeln/alle)
             </button>
             <button
               type="button"
@@ -1854,7 +1861,7 @@ export default function App() {
               disabled={courseImportBusy}
               onClick={() => courseDirectoryRef.current?.click()}
             >
-              Kursordner wählen
+              Kursordner wählen (einzeln/alle)
             </button>
           </div>
           <input
@@ -1876,7 +1883,7 @@ export default function App() {
           />
           {courseImportBusy ? (
             <p className="course-import-status" role="status">
-              Kurs wird lokal geprüft und vorbereitet …
+              Kursdaten werden lokal geprüft und vorbereitet …
             </p>
           ) : null}
           {courseImportError ? (

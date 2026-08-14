@@ -10,12 +10,18 @@ import {
   type RepertoireSide,
 } from '../domain/repertoire.js';
 import {
+  chesslyBrowserEntries,
+  extractChesslyZipEntries,
   parseChesslyBrowserFiles,
+  parseChesslyFiles,
   parseChesslyZip,
 } from './chessly.js';
+import { knownCourseSide } from './known-course-sides.js';
 import type {
   BrowserImportFile,
   ChesslyStudyImport,
+  ImportFileEntry,
+  ValidatedImportPackage,
 } from './types.js';
 
 export interface BuiltCoursePack {
@@ -128,17 +134,10 @@ function indexFor(
   };
 }
 
-export async function buildCoursePackFromBrowserFiles(
-  files: readonly BrowserImportFile[],
+function buildCoursePack(
+  preview: ValidatedImportPackage,
   repertoireSide: Exclude<RepertoireSide, 'unresolved'>,
-): Promise<BuiltCoursePack> {
-  const onlyFile = files.length === 1 ? files[0] : undefined;
-  const preview =
-    onlyFile?.name.toLocaleLowerCase('en').endsWith('.zip') === true
-      ? parseChesslyZip(await onlyFile.arrayBuffer(), {
-          sourceType: 'main',
-        }, onlyFile.name)
-      : await parseChesslyBrowserFiles(files, { sourceType: 'main' });
+): BuiltCoursePack {
   if (
     !preview.canApply ||
     preview.payload?.kind !== 'chessly-studies' ||
@@ -156,7 +155,12 @@ export async function buildCoursePackFromBrowserFiles(
     importedStudies.find(
       (study) => study.metadata.course !== 'nicht eindeutig erkennbar',
     )?.metadata.course ?? importedStudies[0]?.courseFolder ?? 'Imported course';
-  const id = slugify(title);
+  const sourceCourseFolder = importedStudies[0]?.courseFolder;
+  const id = slugify(
+    sourceCourseFolder && sourceCourseFolder !== 'nicht eindeutig erkennbar'
+      ? sourceCourseFolder
+      : title,
+  );
   const fingerprint = stableId(
     'browser-import',
     importedStudies.map((study) => [
@@ -193,4 +197,67 @@ export async function buildCoursePackFromBrowserFiles(
     index: indexFor(result.repertoire, issueCount),
     repertoire: result.repertoire,
   };
+}
+
+export async function buildCoursePackFromBrowserFiles(
+  files: readonly BrowserImportFile[],
+  repertoireSide: Exclude<RepertoireSide, 'unresolved'>,
+): Promise<BuiltCoursePack> {
+  const onlyFile = files.length === 1 ? files[0] : undefined;
+  const preview =
+    onlyFile?.name.toLocaleLowerCase('en').endsWith('.zip') === true
+      ? parseChesslyZip(await onlyFile.arrayBuffer(), {
+          sourceType: 'main',
+        }, onlyFile.name)
+      : await parseChesslyBrowserFiles(files, { sourceType: 'main' });
+  return buildCoursePack(preview, repertoireSide);
+}
+
+const STUDY_FILE_NAMES = new Set(['moves.json', 'comments.json', 'info.md']);
+
+function entriesByCourse(
+  entries: readonly ImportFileEntry[],
+): Map<string, ImportFileEntry[]> {
+  const result = new Map<string, ImportFileEntry[]>();
+  for (const entry of entries) {
+    const segments = entry.path.replaceAll('\\', '/').split('/').filter(Boolean);
+    if (segments.length < 3 || !STUDY_FILE_NAMES.has(segments.at(-1) ?? '')) {
+      continue;
+    }
+    const courseFolder = segments.at(-3);
+    if (!courseFolder) continue;
+    result.set(courseFolder, [...(result.get(courseFolder) ?? []), entry]);
+  }
+  return result;
+}
+
+export async function buildCoursePacksFromBrowserFiles(
+  files: readonly BrowserImportFile[],
+  singleCourseSide: Exclude<RepertoireSide, 'unresolved'>,
+): Promise<BuiltCoursePack[]> {
+  const onlyFile = files.length === 1 ? files[0] : undefined;
+  const entries =
+    onlyFile?.name.toLocaleLowerCase('en').endsWith('.zip') === true
+      ? extractChesslyZipEntries(await onlyFile.arrayBuffer())
+      : await chesslyBrowserEntries(files);
+  const grouped = entriesByCourse(entries);
+  if (grouped.size <= 1) {
+    return [await buildCoursePackFromBrowserFiles(files, singleCourseSide)];
+  }
+
+  const unknown = [...grouped.keys()].filter(
+    (courseFolder) => knownCourseSide(courseFolder) === undefined,
+  );
+  if (unknown.length > 0) {
+    throw new Error(
+      `Für diese Kurse ist Weiß/Schwarz unbekannt: ${unknown.join(', ')}. Bitte einzeln importieren.`,
+    );
+  }
+
+  return [...grouped.entries()].map(([courseFolder, courseEntries]) =>
+    buildCoursePack(
+      parseChesslyFiles(courseEntries, { sourceType: 'main' }),
+      knownCourseSide(courseFolder)!,
+    ),
+  );
 }

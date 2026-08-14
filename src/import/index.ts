@@ -22,7 +22,10 @@ export { ZIP_IMPORT_LIMITS } from './chessly.js';
 export { IMPORT_PACKAGE_VERSION } from './types.js';
 export type * from './types.js';
 export { importPackageToLocalAdditions } from './to-local-additions.js';
-export { buildCoursePackFromBrowserFiles } from './course-pack.js';
+export {
+  buildCoursePackFromBrowserFiles,
+  buildCoursePacksFromBrowserFiles,
+} from './course-pack.js';
 export type { BuiltCoursePack } from './course-pack.js';
 
 export function parseImportInput(
