@@ -503,6 +503,53 @@ describe('Importance Practice integration', () => {
     expect(items[0]?.sans).toEqual(['e4', 'e5']);
   });
 
+  it('never introduces a shorter nested Practice line when the Importance range grows', () => {
+    const repertoire = fixture([
+      ['e4', 'e5'],
+      ['e4', 'e5', 'Nf3', 'Nc6'],
+      ['e4', 'c5', 'Nf3', 'd6'],
+    ], 'black');
+    const pack = popularity(repertoire, {
+      e4: 100_000,
+      e5: 80_000,
+      Nf3: 60_000,
+      Nc6: 50_000,
+      c5: 20_000,
+      d6: 10_000,
+    });
+
+    for (const budget of [2, 3, 4, 5]) {
+      const scope = createImportanceScope(
+        repertoire,
+        [repertoire.rootPosition],
+        budget,
+        pack,
+      );
+      const items = createPracticeItems(
+        scope.repertoire,
+        scope.repertoire.rootPosition,
+        Math.max(
+          1,
+          maximumPracticeDepth(
+            scope.repertoire,
+            scope.repertoire.rootPosition,
+          ),
+        ),
+        { boundary: 'scope-end', continuationRepertoire: repertoire },
+      );
+
+      for (const shorter of items) {
+        for (const longer of items) {
+          if (shorter.id === longer.id) continue;
+          const isStrictPrefix =
+            shorter.sans.length < longer.sans.length &&
+            shorter.sans.every((san, index) => san === longer.sans[index]);
+          expect(isStrictPrefix).toBe(false);
+        }
+      }
+    }
+  });
+
   it('keeps one stable item when a smaller scope extension matches the larger scope', () => {
     const repertoire = fixture([['e4', 'e5', 'Nf3', 'Nc6']]);
     const pack = popularity(repertoire, { e4: 100, e5: 90, Nf3: 80, Nc6: 70 });
