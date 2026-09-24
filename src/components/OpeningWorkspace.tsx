@@ -9,6 +9,7 @@ import {
   createPracticeItems,
   createMovePracticeItems,
   deterministicStartingPath,
+  maximumPracticeDepth,
   markPracticeLineUnderstood,
   penalizePracticeLine,
   practiceLineProgress,
@@ -20,6 +21,13 @@ import {
   type PracticeCompletionReason,
   type PracticeSchedulerState,
 } from '../domain/practice.js';
+import {
+  buildImportanceOrder,
+  createImportanceScope,
+  importanceBudgetOptions,
+  normalizeImportanceBudget,
+  type PopularityPack,
+} from '../domain/popularity.js';
 import {
   createVariationIndex,
   maximumTrainingDepth,
@@ -44,11 +52,16 @@ import { UserStateStore } from '../storage/user-state.js';
 
 export type OpeningWorkspaceMode = 'book' | 'practice' | 'explorer';
 type PracticeTrainingMode = 'full-lines' | 'random-recall';
+type PracticeScopeMode = 'fixed-depth' | 'importance';
 interface Ply { fen: string; position: string; edgeId: string; san: string; automatic: boolean; }
 interface Stats { attempted: number; firstTry: number; mistakes: number; hint1: number; hint2: number; completed: number; }
 interface PracticeCompletion { reason: PracticeCompletionReason; canContinueCurrentLine: boolean; }
 interface MoveTimerState { key: string | null; duration: number; remaining: number; timedOut: boolean; }
 const EMPTY_STATS: Stats = { attempted: 0, firstTry: 0, mistakes: 0, hint1: 0, hint2: 0, completed: 0 };
+const REACH_PERCENT_FORMAT = new Intl.NumberFormat('en-US', {
+  style: 'percent',
+  maximumFractionDigits: 2,
+});
 
 const COMPLETION_LABELS: Record<PracticeCompletionReason, string> = {
   'target-depth-reached': 'Target depth reached',
@@ -323,12 +336,14 @@ function PositionPicker({
 
 export function OpeningWorkspace({
   repertoire,
+  popularityPack = null,
   initialMode = 'book',
   onExit,
   explorerSources,
   random = Math.random,
 }: {
   repertoire: CanonicalRepertoire;
+  popularityPack?: PopularityPack | null;
   initialMode?: OpeningWorkspaceMode;
   onExit?: () => void;
   explorerSources?: Parameters<typeof ExplorerWorkspace>[0]['sources'];
@@ -345,9 +360,11 @@ export function OpeningWorkspace({
   );
   const [mode, setMode] = useState<OpeningWorkspaceMode>(initialMode);
   const [trainingMode, setTrainingMode] = useState<PracticeTrainingMode>('full-lines');
+  const [scopeMode, setScopeMode] = useState<PracticeScopeMode>('fixed-depth');
   const [started, setStarted] = useState(initialMode === 'book');
   const [depth, setDepth] = useState(initialPracticeSetup.depth);
   const [useMaximumDepth, setUseMaximumDepth] = useState(initialPracticeSetup.max);
+  const [importancePositions, setImportancePositions] = useState(30);
   const [history, setHistory] = useState<Ply[]>([]);
   const [viewIndex, setViewIndex] = useState(-1);
   const [position, setPosition] = useState(repertoire.rootPosition);
@@ -411,15 +428,72 @@ export function OpeningWorkspace({
     [practiceRoots, variationIndex],
   );
   const targetDepth = useMaximumDepth ? maximumDepth : Math.min(depth, maximumDepth);
+  const importanceOrder = useMemo(
+    () => {
+      if (!popularityPack) return [];
+      const defaultRoots = popularityPack.defaultRootPositions;
+      const usesDefaultRoots = practiceRoots.length === defaultRoots.length &&
+        practiceRoots.every((root, index) => root === defaultRoots[index]);
+      return usesDefaultRoots
+        ? popularityPack.importanceOrder
+        : buildImportanceOrder(
+            repertoire,
+            practiceRoots,
+            popularityPack.edgeGames,
+            popularityPack.positionGames,
+          );
+    },
+    [popularityPack, practiceRoots, repertoire],
+  );
+  const maximumImportancePositions = importanceOrder.length;
+  const importanceBudgets = useMemo(
+    () => importanceBudgetOptions(maximumImportancePositions),
+    [maximumImportancePositions],
+  );
+  const targetImportancePositions = normalizeImportanceBudget(
+    importancePositions,
+    maximumImportancePositions,
+  );
+  const importanceBudgetIndex = Math.max(
+    0,
+    importanceBudgets.indexOf(targetImportancePositions),
+  );
+  const importanceScope = useMemo(
+    () => popularityPack
+      ? createImportanceScope(
+          repertoire,
+          practiceRoots,
+          targetImportancePositions,
+          popularityPack,
+        )
+      : null,
+    [popularityPack, practiceRoots, repertoire, targetImportancePositions],
+  );
+  const practiceRepertoire = scopeMode === 'importance' && importanceScope
+    ? importanceScope.repertoire
+    : repertoire;
+  const practiceDepthLimit = scopeMode === 'importance'
+    ? Math.max(
+        1,
+        ...practiceRoots.map((root) => maximumPracticeDepth(practiceRepertoire, root)),
+      )
+    : targetDepth;
   const practiceLines = useMemo(
     () => [...new Map(practiceRoots.flatMap((root) =>
-      createPracticeItems(repertoire, root, targetDepth),
+      createPracticeItems(
+        practiceRepertoire,
+        root,
+        practiceDepthLimit,
+        scopeMode === 'importance'
+          ? { boundary: 'scope-end', continuationRepertoire: repertoire }
+          : undefined,
+      ),
     ).map((item) => [item.id, item])).values()],
-    [practiceRoots, repertoire, targetDepth],
+    [practiceDepthLimit, practiceRepertoire, practiceRoots, repertoire, scopeMode],
   );
   const movePracticeItems = useMemo(
-    () => createMovePracticeItems(repertoire, practiceRoots, targetDepth),
-    [practiceRoots, repertoire, targetDepth],
+    () => createMovePracticeItems(practiceRepertoire, practiceRoots, practiceDepthLimit),
+    [practiceDepthLimit, practiceRepertoire, practiceRoots],
   );
   const exercisePly = Math.max(0, history.length - activeItemHistoryStart);
   const expectedPracticeEdge = activeLine
@@ -595,14 +669,13 @@ export function OpeningWorkspace({
       return () => window.clearTimeout(timer);
     }
     if (mode === 'practice' && activeLine) {
-      if (segmentDecisions >= targetDepth) {
-        completeExercise(activeLine.theoryEdgeIds.length > activeLine.edgeIds.length
-          ? 'target-depth-reached'
-          : 'stored-line-ended');
-        return;
-      }
       if (!expectedPracticeEdge || expectedPracticeEdge.from !== position) {
-        completeExercise('stored-line-ended');
+        completeExercise(
+          segmentDecisions >= practiceDepthLimit &&
+          activeLine.theoryEdgeIds.length > activeLine.edgeIds.length
+            ? 'target-depth-reached'
+            : 'stored-line-ended',
+        );
         return;
       }
       if (turn !== repertoireTurn) {
@@ -617,7 +690,7 @@ export function OpeningWorkspace({
         ? current
         : 'Play your repertoire move');
     }
-  }, [activeLine, applyEdge, completeExercise, completion, currentDecision, expectedPracticeEdge, liveContinuations, mode, position, repertoire.edges, repertoireTurn, segmentDecisions, started, targetDepth, turn, viewingLatest]);
+  }, [activeLine, applyEdge, completeExercise, completion, currentDecision, expectedPracticeEdge, liveContinuations, mode, position, practiceDepthLimit, repertoire.edges, repertoireTurn, segmentDecisions, started, turn, viewingLatest]);
 
   const handleMove = (from: string, to: string, promotion: PromotionPiece | undefined): boolean => {
     let move;
@@ -662,7 +735,11 @@ export function OpeningWorkspace({
   const continueCurrentLine = () => {
     if (!completion?.canContinueCurrentLine || mistake || !viewingLatest || !activeLine) return;
     const remainingTheoryPath = activeLine.theoryEdgeIds.slice(activeLine.edgeIds.length);
-    const continuationItems = createPracticeItems(repertoire, position, targetDepth);
+    const continuationItems = createPracticeItems(
+      practiceRepertoire,
+      position,
+      practiceDepthLimit,
+    );
     const nextItem = continuationItems.find(
       (item) => item.edgeIds.every((edgeId, index) => edgeId === remainingTheoryPath[index]),
     ) ?? continuationItems[0];
@@ -860,22 +937,29 @@ export function OpeningWorkspace({
       <p className="eyebrow">Practice setup</p>
       <h1>Train {repertoire.title}</h1>
       <p>Opening: {repertoire.title} · Repertoire side: {repertoire.openingSide}</p>
-      <fieldset className="training-type"><legend>Training type</legend><button aria-pressed={trainingMode === 'full-lines'} onClick={() => setTrainingMode('full-lines')}><strong>Full Lines</strong><span>Recall complete depth-bounded sequences.</span></button><button aria-pressed={trainingMode === 'random-recall'} onClick={() => setTrainingMode('random-recall')}><strong>Random Move Recall</strong><span>Find one repertoire move from a random position.</span></button></fieldset>
+      <fieldset className="training-type"><legend>Training type</legend><button aria-pressed={trainingMode === 'full-lines'} onClick={() => setTrainingMode('full-lines')}><strong>Full Lines</strong><span>Recall complete scope-bounded sequences.</span></button><button aria-pressed={trainingMode === 'random-recall'} onClick={() => setTrainingMode('random-recall')}><strong>Random Move Recall</strong><span>Find one repertoire move from a random position.</span></button></fieldset>
+      <fieldset className="training-type training-scope"><legend>Training scope</legend><button aria-pressed={scopeMode === 'fixed-depth'} onClick={() => setScopeMode('fixed-depth')}><strong>Fixed depth</strong><span>Train every variation to the same decision depth.</span></button><button aria-pressed={scopeMode === 'importance'} disabled={!popularityPack || maximumImportancePositions === 0} title={!popularityPack ? 'Popularity data not available for this opening yet.' : undefined} onClick={() => setScopeMode('importance')}><strong>Importance</strong><span>Learn common variations deeper and rare variations less deeply.</span></button></fieldset>
       <div className="selected-training-positions"><h2>Selected training positions</h2><ul>{startingPaths.map((path, index) => <li key={`${path.map((edge) => edge.id).join('-') || 'root'}-${index}`}><span><strong>Position {index + 1}</strong><small>{path.length ? path.map((edge) => edge.san).join(' ') : 'Opening root'}</small></span><div><button onClick={() => { setEditingStartingPath(index); setPickerOpen(true); }}>Change</button><button disabled={startingPaths.length === 1} onClick={() => {
         const next = startingPaths.filter((_, pathIndex) => pathIndex !== index);
         setStartingPaths(next);
         userState.setPracticeStartingPositions(repertoire.openingId, next.map((item) => ({ edgeIds: item.map((edge) => edge.id) })));
       }}>Remove</button></div></li>)}</ul><button onClick={() => { setEditingStartingPath(null); setPickerOpen(true); }}>+ Add position</button></div>
-      <label className="range-setting"><span>Training depth: <strong>{targetDepth}</strong></span><input aria-label="Training depth" type="range" min="1" max={Math.max(1, maximumDepth)} step="1" value={Math.max(1, targetDepth)} onChange={(event) => { setUseMaximumDepth(false); setDepth(Number(event.target.value)); }} /></label>
-      <p>Relative to the selected starting position · maximum {maximumDepth}</p>
+      {scopeMode === 'fixed-depth' ? <>
+        <label className="range-setting"><span>Training depth: <strong>{targetDepth}</strong></span><input aria-label="Training depth" type="range" min="1" max={Math.max(1, maximumDepth)} step="1" value={Math.max(1, targetDepth)} onChange={(event) => { setUseMaximumDepth(false); setDepth(Number(event.target.value)); }} /></label>
+        <p>Relative to the selected starting position · maximum {maximumDepth}</p>
+      </> : <>
+        <label className="range-setting"><span>Positions: <strong>{targetImportancePositions}</strong></span><input aria-label="Importance positions" aria-valuetext={`${targetImportancePositions} positions`} type="range" min="0" max={Math.max(0, importanceBudgets.length - 1)} step="1" value={importanceBudgetIndex} onChange={(event) => setImportancePositions(importanceBudgets[Number(event.target.value)] ?? targetImportancePositions)} /></label>
+        <p>Importance maximum: {maximumImportancePositions} unique positions across all selected roots.</p>
+        {importanceScope ? <dl className="importance-summary" aria-label="Importance scope summary"><div><dt>Positions</dt><dd>{importanceScope.summary.positions}</dd></div><div><dt>Theory branches represented</dt><dd>{importanceScope.summary.branches}</dd></div><div><dt>Deepest branch</dt><dd>{importanceScope.summary.deepestBranchPlies} plies</dd></div><div><dt>Lowest repertoire reach</dt><dd>{REACH_PERCENT_FORMAT.format(importanceScope.summary.lowestRepertoireReach)}</dd></div></dl> : null}
+      </>}
       <label className="range-setting"><span>Move timer: <strong>{moveTimerSeconds === 0 ? 'Off' : `${moveTimerSeconds} s`}</strong></span><input aria-label="Move timer" type="range" min="0" max="15" step="1" value={moveTimerSeconds} onChange={(event) => setMoveTimerSeconds(Number(event.target.value))} /></label>
-      <p>{trainingMode === 'full-lines' ? `${activePracticeLineCount} active practice lines · ${practiceLines.length - activePracticeLineCount} mastered at this depth` : `${activeMovePracticeCount} active recall moves · ${movePracticeItems.length - activeMovePracticeCount} mastered at this depth`}</p>
+      <p>{trainingMode === 'full-lines' ? `${activePracticeLineCount} active practice lines · ${practiceLines.length - activePracticeLineCount} mastered in this scope` : `${activeMovePracticeCount} active recall moves · ${movePracticeItems.length - activeMovePracticeCount} mastered in this scope`}</p>
       {trainingMode === 'full-lines' && !canStartNextVariation ? <p role="status">All practice lines at this depth are mastered.</p> : null}
       {trainingMode === 'random-recall' && activeMovePracticeCount === 0 ? <p role="status">All recall moves at this depth are mastered.</p> : null}
       {completion?.reason === 'user-ended-exercise' ? <p role="status">Previous exercise: {COMPLETION_LABELS[completion.reason]}</p> : null}
       <div className="setup-actions"><button className="primary" onClick={startPractice} disabled={trainingMode === 'full-lines' ? !canStartNextVariation : activeMovePracticeCount === 0}>Start practice</button><button onClick={() => setResetProgressOpen(true)} disabled={(trainingMode === 'full-lines' ? practiceLines : movePracticeItems).length === 0}>Reset training progress</button></div>
     </section> : mode === 'practice' && trainingMode === 'random-recall' ? <RandomRecallSession
-      repertoire={repertoire}
+      repertoire={practiceRepertoire}
       items={movePracticeItems}
       progress={moveProgress}
       onProgressChange={(next) => { setMoveProgress(next); userState.setPracticeMoveProgress(repertoire.openingId, next); }}
@@ -951,7 +1035,7 @@ export function OpeningWorkspace({
             <button className="text-button" onClick={() => reset('practice')}>Back to setup</button>
             {!canStartNextVariation ? <div className="all-mastered-message">
               <p role="status">All practice lines at this depth are mastered.</p>
-              {targetDepth < maximumDepth ? <button onClick={() => {
+              {scopeMode === 'fixed-depth' && targetDepth < maximumDepth ? <button onClick={() => {
                 setUseMaximumDepth(false);
                 setDepth(targetDepth + 1);
                 reset('practice');
