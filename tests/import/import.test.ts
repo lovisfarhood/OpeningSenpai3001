@@ -12,6 +12,7 @@ import {
   parseChesslyFiles,
   parseChesslyZip,
   parseNativeImport,
+  ZIP_IMPORT_LIMITS,
   type ImportFileEntry,
   type RawImportedComment,
   type RawImportedMove,
@@ -264,6 +265,13 @@ describe('Chessly-Dateiimport', () => {
 });
 
 describe('ZIP-Import', () => {
+  it('erlaubt das vollständige Kursarchiv mit ausreichend Größenreserve', () => {
+    expect(ZIP_IMPORT_LIMITS.compressedBytes).toBe(64 * 1024 * 1024);
+    expect(ZIP_IMPORT_LIMITS.totalExpandedBytes).toBeGreaterThanOrEqual(
+      50 * 1024 * 1024,
+    );
+  });
+
   it('entpackt Chessly-Studies ausschließlich im Speicher', () => {
     const files = studyFiles({
       directory: 'caro-kann-bonus/01_zip',

@@ -38,7 +38,9 @@ const RECOGNIZED_FILES = new Set<string>(REQUIRED_FILES);
 const UNKNOWN_METADATA = 'nicht eindeutig erkennbar';
 
 export const ZIP_IMPORT_LIMITS = {
-  compressedBytes: 25 * 1024 * 1024,
+  // The complete 50-course export is about 30 MiB before ZIP compression.
+  // Keep enough headroom for archive metadata while preserving ZIP-bomb guards.
+  compressedBytes: 64 * 1024 * 1024,
   entryBytes: 10 * 1024 * 1024,
   totalExpandedBytes: 50 * 1024 * 1024,
   entries: 3_000,
