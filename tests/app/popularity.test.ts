@@ -6,6 +6,7 @@ import {
   createImportanceScope,
   importanceBudgetOptions,
   normalizeImportanceBudget,
+  publicPositionKey,
   type PopularityPack,
 } from '../../src/domain/popularity.js';
 import {
@@ -230,6 +231,37 @@ describe('Importance priority frontier', () => {
     expect(scope.selectedPositions).toHaveLength(4);
     expect(scope.selectedPositions.has(roots[0]!)).toBe(false);
     expect(scope.selectedPositions.has(roots[1]!)).toBe(false);
+  });
+});
+
+describe('public popularity serialization', () => {
+  it('recomputes opponent probabilities from opaque position keys', () => {
+    const repertoire = fixture([['e4', 'e5']]);
+    const pack = configuredPopularity(
+      repertoire,
+      [{ parent: ['e4'], san: 'e5', games: 500 }],
+      [{ path: ['e4'], games: 1_000 }],
+    );
+    const opaquePositionGames = Object.fromEntries(
+      Object.entries(pack.positionGames).map(([position, games]) => [
+        publicPositionKey(position),
+        games,
+      ]),
+    );
+    const order = buildImportanceOrder(
+      repertoire,
+      [repertoire.rootPosition],
+      pack.edgeGames,
+      opaquePositionGames,
+    );
+    const opponentReply = order.find(
+      (entry) => entry.position === positionAfter(['e4', 'e5']),
+    );
+
+    expect(Object.keys(opaquePositionGames).every(
+      (key) => /^position_[0-9a-f]{16}$/.test(key),
+    )).toBe(true);
+    expect(opponentReply?.moveProbabilityFactor).toBeCloseTo(0.5);
   });
 });
 
