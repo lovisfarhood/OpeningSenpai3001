@@ -1816,3 +1816,29 @@ button:disabled {
   .course-import { grid-template-columns: 1fr; }
 }
 /* === End stored variation summaries and arrow layers === */
+
+
+/* === Importance Practice scope === */
+.training-type button:disabled { cursor: not-allowed; opacity: .52; }
+.importance-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 18px 0 28px;
+}
+.importance-summary div {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: rgba(255,255,255,.025);
+}
+.importance-summary dt { color: var(--muted); font-size: 11px; }
+.importance-summary dd {
+  margin: 5px 0 0;
+  color: var(--paper);
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 560px) {
+  .importance-summary { grid-template-columns: 1fr; }
+}
+/* === End Importance Practice scope === */
