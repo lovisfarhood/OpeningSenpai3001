@@ -16,6 +16,10 @@ import {
   type CanonicalRepertoire,
 } from '../domain/repertoire.js';
 import { createPracticeItems, practiceLineProgress } from '../domain/practice.js';
+import {
+  buildImportanceOrder,
+  type PopularityPack,
+} from '../domain/popularity.js';
 import { UserStateStore } from '../storage/user-state.js';
 import { OpeningWorkspace } from './OpeningWorkspace.js';
 import type {
@@ -108,6 +112,28 @@ function edgePath(
     position = edge.to;
   }
   return path;
+}
+
+function popularityPack(repertoire: CanonicalRepertoire): PopularityPack {
+  const edgeGames = Object.fromEntries(Object.values(repertoire.edges).map(
+    (edge) => [edge.id, edge.san === 'd4' ? 10 : 100],
+  ));
+  const positionGames = Object.fromEntries(Object.values(repertoire.edges).map(
+    (edge) => [edge.to, edgeGames[edge.id] ?? 0],
+  ));
+  const roots = [repertoire.rootPosition];
+  return {
+    formatVersion: 2,
+    openingId: repertoire.openingId,
+    source: 'lichess-opening-explorer',
+    retrievedAt: '2026-08-27T00:00:00.000Z',
+    filters: { variant: 'standard', speeds: 'all', ratings: 'all', since: '1952-01', until: '3000-12' },
+    coverage: { repertoireParentPositions: 1, cachedParentPositions: 1, inferredZeroParentPositions: 0, missingParentPositions: 0, failedRequests: 0 },
+    edgeGames,
+    positionGames,
+    defaultRootPositions: roots,
+    importanceOrder: buildImportanceOrder(repertoire, roots, edgeGames, positionGames),
+  };
 }
 
 function persistSetup(
@@ -327,6 +353,53 @@ describe('OpeningWorkspace practice completion', () => {
     expect(sequenceMoves()).toEqual(['d4', 'd5', 'Bf4', 'Nf6', 'e3']);
 
     expect(screen.queryByRole('button', { name: 'Next variation' })).not.toBeInTheDocument();
+  });
+
+  it('lets White answer after an Importance boundary ending on the automatic Black move', async () => {
+    const repertoire = fixture('white', 'importance-response', [[
+      'e4', 'e5', 'Nf3', 'Nc6', 'Bb5', 'a6', 'Ba4', 'Nf6', 'O-O',
+      'Be7', 'Re1', 'b5',
+    ]]);
+    persistSetup(repertoire, 3);
+    render(
+      <OpeningWorkspace
+        repertoire={repertoire}
+        popularityPack={popularityPack(repertoire)}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Practice Mode' }));
+    fireEvent.click(screen.getByRole('button', { name: /Importance/ }));
+    fireEvent.change(screen.getByRole('slider', { name: 'Importance positions' }), {
+      target: { value: '0' },
+    });
+    expect(screen.getByLabelText('Importance positions')).toHaveAttribute(
+      'aria-valuetext',
+      '10 positions',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Start practice' }));
+
+    await playSelectedMove(repertoire); // e4
+    await playAutomaticOpponentMove(); // e5
+    await playSelectedMove(repertoire); // Nf3
+    await playAutomaticOpponentMove(); // Nc6
+    await playSelectedMove(repertoire); // Bb5
+    await playAutomaticOpponentMove(); // a6
+    await playSelectedMove(repertoire); // Ba4
+    await playAutomaticOpponentMove(); // Nf6
+    await playSelectedMove(repertoire); // O-O
+    await playAutomaticOpponentMove(); // Be7 (formal position 10)
+
+    expect(sequenceMoves()).toEqual([
+      'e4', 'e5', 'Nf3', 'Nc6', 'Bb5', 'a6', 'Ba4', 'Nf6', 'O-O', 'Be7',
+    ]);
+    expect(screen.queryByRole('region', { name: 'Practice completion actions' }))
+      .not.toBeInTheDocument();
+    expect(screen.getAllByText('Play your repertoire move')).not.toHaveLength(0);
+
+    await playSelectedMove(repertoire); // Re1 (execution-only response)
+    expect(sequenceMoves().at(-1)).toBe('Re1');
+    expect(screen.getByRole('region', { name: 'Practice completion actions' }))
+      .toBeInTheDocument();
   });
 
   it('keeps completion actions coherent after a mistake and a shown solution', async () => {
@@ -657,6 +730,42 @@ describe('OpeningWorkspace practice controls', () => {
     fireEvent.click(removeButtons[0]!);
     expect(screen.getAllByRole('button', { name: 'Remove' })).toHaveLength(1);
     expect(new UserStateStore().getPracticeStartingPositions(repertoire.openingId)).toHaveLength(1);
+  });
+
+  it('switches from Fixed depth to a discrete-position Importance scope', () => {
+    const repertoire = fixture('white', 'importance-ui', [
+      [
+        'e4', 'e5', 'Nf3', 'Nc6', 'Bb5', 'a6', 'Ba4', 'Nf6', 'O-O',
+        'Be7', 'Re1', 'b5', 'Bb3', 'd6', 'c3', 'O-O', 'h3',
+      ],
+      [
+        'e4', 'c5', 'Nf3', 'd6', 'd4', 'cxd4', 'Nxd4', 'Nf6', 'Nc3',
+        'a6', 'Be3', 'e5', 'Nf3', 'Be7', 'Bc4', 'O-O', 'O-O',
+      ],
+    ]);
+    const pack = popularityPack(repertoire);
+    render(<OpeningWorkspace repertoire={repertoire} popularityPack={pack} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Practice Mode' }));
+
+    expect(screen.getByRole('slider', { name: 'Training depth' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Importance/ }));
+    expect(screen.queryByRole('slider', { name: 'Training depth' })).not.toBeInTheDocument();
+    const slider = screen.getByRole('slider', { name: 'Importance positions' });
+    expect(Number(slider.getAttribute('max'))).toBeGreaterThan(0);
+    expect(slider).toHaveAttribute('aria-valuetext', '30 positions');
+    fireEvent.change(slider, { target: { value: '0' } });
+    expect(slider).toHaveAttribute('aria-valuetext', '10 positions');
+    expect(within(screen.getByLabelText('Importance scope summary')).getByText('10')).toBeInTheDocument();
+    expect(within(screen.getByLabelText('Importance scope summary')).getByText('Lowest repertoire reach')).toBeInTheDocument();
+  });
+
+  it('disables Importance cleanly when its lazy popularity pack is absent', () => {
+    const repertoire = fixture('white', 'importance-missing', [['e4', 'e5']]);
+    render(<OpeningWorkspace repertoire={repertoire} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Practice Mode' }));
+
+    expect(screen.getByRole('button', { name: /Importance/ })).toBeDisabled();
+    expect(screen.getByTitle('Popularity data not available for this opening yet.')).toBeInTheDocument();
   });
 
   it('resets only the current setup progress after confirmation', () => {
