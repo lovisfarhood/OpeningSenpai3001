@@ -247,6 +247,24 @@ function finishAfterRepertoireMove(
   return response ? [...prefix, response.edgeId] : prefix;
 }
 
+function isStrictFinalizedPrefix(
+  repertoire: CanonicalRepertoire,
+  shorter: readonly string[],
+  longer: readonly string[],
+): boolean {
+  if (shorter.length >= longer.length) return false;
+  return shorter.every((edgeId, index) => {
+    const left = repertoire.edges[edgeId];
+    const right = repertoire.edges[longer[index] ?? ''];
+    if (!left || !right) return edgeId === longer[index];
+    return (
+      left.from === right.from &&
+      left.san === right.san &&
+      left.to === right.to
+    );
+  });
+}
+
 /**
  * Builds one stable item per unique path visible at the configured depth.
  * Later theory branches and source-lineage order never affect item identity.
@@ -294,26 +312,55 @@ export function createPracticeItems(
     }
   }
 
-  return [...grouped.values()].map<PracticeItem>(({ prefix, representative, lineageIds }) => {
-    const endPosition = executionRepertoire.edges[prefix.at(-1) ?? '']?.to ?? rootPosition;
-    const theoryEdgeIds = representative.edgeIds.length >= prefix.length
-      ? representative.edgeIds
-      : prefix;
-    return {
-      id: stableId('practice-item-v3', [
-        repertoire.openingId,
-        edgePathSignature(executionRepertoire, prefix),
-      ]),
-      openingId: repertoire.openingId,
-      rootPosition,
-      endPosition,
-      trainingDepth: normalizedDepth,
-      edgeIds: prefix,
-      sans: prefix.flatMap((id) => executionRepertoire.edges[id]?.san ?? []),
-      theoryEdgeIds,
-      theoryLineageIds: [...lineageIds].sort((left, right) => left.localeCompare(right, 'en')),
-    };
-  }).sort((left, right) => left.id.localeCompare(right.id, 'en'));
+  const finalizedGroups = [...grouped.values()];
+  const redundantPrefixes = new Set<number>();
+
+  for (const [index, candidate] of finalizedGroups.entries()) {
+    const extensions = finalizedGroups.filter(
+      (other, otherIndex) =>
+        otherIndex !== index &&
+        isStrictFinalizedPrefix(
+          executionRepertoire,
+          candidate.prefix,
+          other.prefix,
+        ),
+    );
+    if (extensions.length === 0) continue;
+
+    // A shorter finalized sequence teaches no additional move when an
+    // otherwise identical longer sequence is already present in this scope.
+    // Keep only the maximal sequence(s), but preserve source lineage metadata.
+    redundantPrefixes.add(index);
+    for (const extension of extensions) {
+      for (const lineageId of candidate.lineageIds) {
+        extension.lineageIds.add(lineageId);
+      }
+    }
+  }
+
+  return finalizedGroups
+    .filter((_, index) => !redundantPrefixes.has(index))
+    .map<PracticeItem>(({ prefix, representative, lineageIds }) => {
+      const endPosition = executionRepertoire.edges[prefix.at(-1) ?? '']?.to ?? rootPosition;
+      const theoryEdgeIds = representative.edgeIds.length >= prefix.length
+        ? representative.edgeIds
+        : prefix;
+      return {
+        id: stableId('practice-item-v3', [
+          repertoire.openingId,
+          edgePathSignature(executionRepertoire, prefix),
+        ]),
+        openingId: repertoire.openingId,
+        rootPosition,
+        endPosition,
+        trainingDepth: normalizedDepth,
+        edgeIds: prefix,
+        sans: prefix.flatMap((id) => executionRepertoire.edges[id]?.san ?? []),
+        theoryEdgeIds,
+        theoryLineageIds: [...lineageIds].sort((left, right) => left.localeCompare(right, 'en')),
+      };
+    })
+    .sort((left, right) => left.id.localeCompare(right.id, 'en'));
 }
 
 /** One Random Recall item per canonical position and stored repertoire move. */
