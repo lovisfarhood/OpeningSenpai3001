@@ -4,6 +4,10 @@ import type {
   MoveOrigin,
   ReplyCandidate,
 } from '../domain/repertoire.js';
+import {
+  isPopularityPack,
+  type PopularityPack,
+} from '../domain/popularity.js';
 import { CoursePackRepository } from '../storage/course-packs.js';
 
 const coursePacks = new CoursePackRepository();
@@ -82,6 +86,26 @@ export async function loadOpeningIndex(signal?: AbortSignal): Promise<OpeningInd
   return stored
     .map((pack) => pack.index)
     .sort((left, right) => left.title.localeCompare(right.title, 'en'));
+}
+
+export async function loadPopularityPack(
+  openingId: string,
+  signal?: AbortSignal,
+): Promise<PopularityPack | null> {
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(openingId)) return null;
+  const response = await fetch(
+    `${import.meta.env.BASE_URL}popularity/${openingId}.json`,
+    signal ? { signal } : undefined,
+  );
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    throw new Error(`Popularity data could not be loaded (${response.status}).`);
+  }
+  const value: unknown = await response.json();
+  if (!isPopularityPack(value) || value.openingId !== openingId) {
+    throw new Error('Popularity data has an unknown format.');
+  }
+  return value;
 }
 
 export function resolveAnnotations(
