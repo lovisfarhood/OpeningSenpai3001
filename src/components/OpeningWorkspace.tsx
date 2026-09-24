@@ -13,6 +13,7 @@ import {
   markPracticeLineUnderstood,
   penalizePracticeLine,
   practiceLineProgress,
+  pruneNestedPracticeItems,
   resetPracticeItemProgress,
   selectPracticeItem,
   classifyPracticeCompletion,
@@ -478,18 +479,36 @@ export function OpeningWorkspace({
         ...practiceRoots.map((root) => maximumPracticeDepth(practiceRepertoire, root)),
       )
     : targetDepth;
+  const practiceContextSansByRoot = useMemo(() => {
+    const result: Record<string, string[]> = {};
+    for (const path of startingPaths) {
+      const root = path.at(-1)?.to ?? repertoire.rootPosition;
+      result[root] ??= path.map((edge) => edge.san);
+    }
+    return result;
+  }, [repertoire.rootPosition, startingPaths]);
   const practiceLines = useMemo(
-    () => [...new Map(practiceRoots.flatMap((root) =>
-      createPracticeItems(
-        practiceRepertoire,
-        root,
-        practiceDepthLimit,
-        scopeMode === 'importance'
-          ? { boundary: 'scope-end', continuationRepertoire: repertoire }
-          : undefined,
-      ),
-    ).map((item) => [item.id, item])).values()],
-    [practiceDepthLimit, practiceRepertoire, practiceRoots, repertoire, scopeMode],
+    () => {
+      const items = [...new Map(practiceRoots.flatMap((root) =>
+        createPracticeItems(
+          practiceRepertoire,
+          root,
+          practiceDepthLimit,
+          scopeMode === 'importance'
+            ? { boundary: 'scope-end', continuationRepertoire: repertoire }
+            : undefined,
+        ),
+      ).map((item) => [item.id, item])).values()];
+      return pruneNestedPracticeItems(items, practiceContextSansByRoot);
+    },
+    [
+      practiceContextSansByRoot,
+      practiceDepthLimit,
+      practiceRepertoire,
+      practiceRoots,
+      repertoire,
+      scopeMode,
+    ],
   );
   const movePracticeItems = useMemo(
     () => createMovePracticeItems(practiceRepertoire, practiceRoots, practiceDepthLimit),

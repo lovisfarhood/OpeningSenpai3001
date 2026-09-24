@@ -21,8 +21,10 @@ import {
   penalizePracticeLine,
   practiceLineProgress,
   practiceSelectionWeight,
+  pruneNestedPracticeItems,
   requiredCleanRuns,
   selectPracticeItem,
+  type PracticeItem,
   type PracticeShuffleState,
   type PracticeLineProgressMap,
 } from '../../src/domain/practice.js';
@@ -517,6 +519,64 @@ describe('depth-bounded practice items', () => {
 
     expect(items).toHaveLength(2);
     expect(chooseWeightedPracticeLine(items, {}, () => 0, previous.id)?.id).not.toBe(previous.id);
+  });
+});
+
+describe('visible Practice prefix pruning', () => {
+  const item = (
+    id: string,
+    rootPosition: string,
+    sans: readonly string[],
+    edgeIds: readonly string[],
+  ): PracticeItem => ({
+    id,
+    openingId: 'practice',
+    rootPosition,
+    endPosition: `end-${id}`,
+    trainingDepth: 1,
+    edgeIds,
+    sans,
+    theoryEdgeIds: edgeIds,
+    theoryLineageIds: [`lineage-${id}`],
+  });
+
+  it('removes a shorter visible line even when its internal edge ids differ', () => {
+    const shorter = item('short', 'root', ['e4', 'e5'], ['a', 'b']);
+    const longer = item('long', 'root', ['e4', 'e5', 'Nf3'], ['x', 'y', 'z']);
+
+    const result = pruneNestedPracticeItems([shorter, longer]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.sans).toEqual(['e4', 'e5', 'Nf3']);
+    expect(result[0]?.theoryLineageIds).toEqual([
+      'lineage-long',
+      'lineage-short',
+    ]);
+  });
+
+  it('compares the complete visible path across different selected starting positions', () => {
+    const fromRoot = item(
+      'long',
+      'opening-root',
+      ['e4', 'e5', 'Nf3'],
+      ['root-e4', 'e4-e5', 'e5-nf3'],
+    );
+    const fromLaterRoot = item(
+      'short',
+      'after-e4',
+      ['e5'],
+      ['later-e5'],
+    );
+
+    const result = pruneNestedPracticeItems(
+      [fromLaterRoot, fromRoot],
+      {
+        'opening-root': [],
+        'after-e4': ['e4'],
+      },
+    );
+
+    expect(result.map((practiceItem) => practiceItem.id)).toEqual(['long']);
   });
 });
 

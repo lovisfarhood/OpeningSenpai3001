@@ -247,22 +247,59 @@ function finishAfterRepertoireMove(
   return response ? [...prefix, response.edgeId] : prefix;
 }
 
-function isStrictFinalizedPrefix(
+function finalizedSans(
   repertoire: CanonicalRepertoire,
+  edgeIds: readonly string[],
+): string[] {
+  return edgeIds.flatMap((edgeId) => repertoire.edges[edgeId]?.san ?? []);
+}
+
+function isStrictVisiblePrefix(
   shorter: readonly string[],
   longer: readonly string[],
 ): boolean {
-  if (shorter.length >= longer.length) return false;
-  return shorter.every((edgeId, index) => {
-    const left = repertoire.edges[edgeId];
-    const right = repertoire.edges[longer[index] ?? ''];
-    if (!left || !right) return edgeId === longer[index];
-    return (
-      left.from === right.from &&
-      left.san === right.san &&
-      left.to === right.to
+  return shorter.length < longer.length &&
+    shorter.every((san, index) => san === longer[index]);
+}
+
+export function pruneNestedPracticeItems(
+  items: readonly PracticeItem[],
+  contextSansByRoot: Readonly<Record<string, readonly string[]>> = {},
+): PracticeItem[] {
+  const mutable = items.map((item) => ({
+    ...item,
+    theoryLineageIds: [...item.theoryLineageIds],
+  }));
+  const redundant = new Set<number>();
+
+  const visibleSans = (item: PracticeItem): string[] => [
+    ...(contextSansByRoot[item.rootPosition] ?? []),
+    ...item.sans,
+  ];
+
+  for (const [index, candidate] of mutable.entries()) {
+    const candidateSans = visibleSans(candidate);
+    const extensions = mutable.filter((other, otherIndex) =>
+      otherIndex !== index &&
+      candidate.openingId === other.openingId &&
+      isStrictVisiblePrefix(candidateSans, visibleSans(other)),
     );
-  });
+    if (extensions.length === 0) continue;
+
+    redundant.add(index);
+    for (const extension of extensions) {
+      extension.theoryLineageIds = [
+        ...new Set([
+          ...extension.theoryLineageIds,
+          ...candidate.theoryLineageIds,
+        ]),
+      ].sort((left, right) => left.localeCompare(right, 'en'));
+    }
+  }
+
+  return mutable
+    .filter((_, index) => !redundant.has(index))
+    .sort((left, right) => left.id.localeCompare(right.id, 'en'));
 }
 
 /**
@@ -319,10 +356,9 @@ export function createPracticeItems(
     const extensions = finalizedGroups.filter(
       (other, otherIndex) =>
         otherIndex !== index &&
-        isStrictFinalizedPrefix(
-          executionRepertoire,
-          candidate.prefix,
-          other.prefix,
+        isStrictVisiblePrefix(
+          finalizedSans(executionRepertoire, candidate.prefix),
+          finalizedSans(executionRepertoire, other.prefix),
         ),
     );
     if (extensions.length === 0) continue;
