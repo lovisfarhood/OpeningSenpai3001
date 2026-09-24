@@ -27,6 +27,7 @@ import {
 import {
   candidateOrigins,
   loadOpeningIndex,
+  loadPopularityPack,
   loadRepertoire,
   resolveAnnotations,
   type OpeningIndexEntry,
@@ -44,6 +45,7 @@ import {
   createCombinedOpenings,
   type CombinedOpening,
 } from './domain/combined-openings.js';
+import type { PopularityPack } from './domain/popularity.js';
 import {
   createExplorerIndex,
   type ExplorerSource,
@@ -1456,6 +1458,8 @@ export default function App() {
     useState<OpeningWorkspaceMode>('book');
   const [repertoire, setRepertoire] =
     useState<CanonicalRepertoire | null>(null);
+  const [popularityPack, setPopularityPack] =
+    useState<PopularityPack | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>('all');
@@ -1575,6 +1579,7 @@ export default function App() {
     setSelectedPgn(null);
     setExplorerSources(null);
     setRepertoire(null);
+    setPopularityPack(null);
     setError(null);
   };
 
@@ -1681,6 +1686,21 @@ export default function App() {
       });
     return () => controller.abort();
   }, [selected]);
+
+  useEffect(() => {
+    const openingId = selected?.id ?? selectedCombined?.id;
+    setPopularityPack(null);
+    if (!openingId) return;
+    const controller = new AbortController();
+    void loadPopularityPack(openingId, controller.signal)
+      .then((pack) => {
+        if (!controller.signal.aborted) setPopularityPack(pack);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setPopularityPack(null);
+      });
+    return () => controller.abort();
+  }, [selected, selectedCombined]);
 
   useEffect(() => {
     const selectionIds = selectedCombined?.openingIds ??
@@ -1998,7 +2018,7 @@ export default function App() {
     if (selectedCombined && selectedMode !== 'explorer' && combinedRepertoire) {
       return <>
         <button className="library-back" type="button" onClick={returnToLibrary}>← {ENGLISH.backToLibrary}</button>
-        <OpeningWorkspace repertoire={combinedRepertoire} initialMode={selectedMode} explorerSources={explorerSources} onExit={returnToLibrary} />
+        <OpeningWorkspace repertoire={combinedRepertoire} popularityPack={popularityPack} initialMode={selectedMode} explorerSources={explorerSources} onExit={returnToLibrary} />
       </>;
     }
     return <>
@@ -2024,7 +2044,7 @@ export default function App() {
       <button className="library-back" type="button" onClick={returnToLibrary}>
         ← {ENGLISH.backToLibrary}
       </button>
-      <OpeningWorkspace repertoire={repertoire} initialMode={selectedMode} onExit={returnToLibrary} />
+      <OpeningWorkspace repertoire={repertoire} popularityPack={popularityPack} initialMode={selectedMode} onExit={returnToLibrary} />
     </>
   );
 }
