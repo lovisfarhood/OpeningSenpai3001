@@ -1,4 +1,4 @@
-const CACHE = 'interactive-chessbook-shell-v3';
+const CACHE = 'interactive-chessbook-shell-v4';
 const shell = [
   './',
   './manifest.webmanifest',
