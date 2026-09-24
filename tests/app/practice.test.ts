@@ -308,6 +308,97 @@ describe('weighted practice-line learning', () => {
 });
 
 describe('depth-bounded practice items', () => {
+  it('deduplicates White items after an opponent-ending path is extended', () => {
+    const data = fixture('white', [
+      ['e4', 'e5', 'Nf3', 'Nc6'],
+      ['e4', 'e5', 'Nf3', 'Nc6', 'Bb5'],
+    ]);
+    const shallow = createPracticeItems(data, data.rootPosition, 1, {
+      boundary: 'scope-end',
+    });
+    const differentlyBounded = createPracticeItems(data, data.rootPosition, 99, {
+      boundary: 'scope-end',
+    });
+
+    expect(shallow).toHaveLength(1);
+    expect(shallow[0]?.sans).toEqual(['e4', 'e5', 'Nf3', 'Nc6', 'Bb5']);
+    expect(shallow[0]?.theoryLineageIds).toHaveLength(2);
+    expect(differentlyBounded).toHaveLength(1);
+    expect(differentlyBounded[0]?.id).toBe(shallow[0]?.id);
+  });
+
+  it('deduplicates Black items after an opponent-ending path is extended', () => {
+    const data = fixture('black', [
+      ['e4'],
+      ['e4', 'c6'],
+    ]);
+    const items = createPracticeItems(data, data.rootPosition, 1, {
+      boundary: 'scope-end',
+    });
+
+    expect(items).toHaveLength(1);
+    expect(items[0]?.sans).toEqual(['e4', 'c6']);
+    expect(items[0]?.theoryLineageIds).toHaveLength(2);
+  });
+
+  it('drops a shorter Practice item when it is a strict prefix of a longer finalized item', () => {
+    const data = fixture('black', [
+      ['e4', 'e5'],
+      ['e4', 'e5', 'Nf3'],
+    ]);
+
+    const items = createPracticeItems(data, data.rootPosition, 99, {
+      boundary: 'scope-end',
+    });
+
+    expect(items).toHaveLength(1);
+    expect(items[0]?.sans).toEqual(['e4', 'e5', 'Nf3']);
+    expect(items[0]?.theoryLineageIds).toHaveLength(2);
+  });
+
+  it('drops only the shared shorter prefix when multiple longer branches exist', () => {
+    const data = fixture('black', [
+      ['e4', 'e5'],
+      ['e4', 'e5', 'Nf3'],
+      ['e4', 'e5', 'Nc3'],
+    ]);
+
+    const items = createPracticeItems(data, data.rootPosition, 99, {
+      boundary: 'scope-end',
+    });
+
+    expect(items).toHaveLength(2);
+    expect(items.map((item) => item.sans.join(' ')).sort()).toEqual([
+      'e4 e5 Nc3',
+      'e4 e5 Nf3',
+    ]);
+    expect(items.every((item) => item.theoryLineageIds.length >= 2)).toBe(true);
+  });
+
+  it('ends a White Fixed Depth sequence on the stored White repertoire move', () => {
+    const data = fixture('white', [['e4', 'e5', 'Nf3', 'Nc6', 'Bb5']]);
+
+    expect(createPracticeItems(data, data.rootPosition, 2)[0]?.sans).toEqual([
+      'e4', 'e5', 'Nf3',
+    ]);
+  });
+
+  it('ends a Black Fixed Depth sequence on the stored Black repertoire move', () => {
+    const data = fixture('black', [['e4', 'c6', 'd4', 'd5', 'Nc3']]);
+
+    expect(createPracticeItems(data, data.rootPosition, 2)[0]?.sans).toEqual([
+      'e4', 'c6', 'd4', 'd5',
+    ]);
+  });
+
+  it('keeps the existing normal end when the nominal boundary is already a repertoire move', () => {
+    const data = fixture('white', [['e4', 'e5', 'Nf3']]);
+    const item = createPracticeItems(data, data.rootPosition, 1)[0];
+
+    expect(item?.sans).toEqual(['e4']);
+    expect(item?.edgeIds).toHaveLength(1);
+  });
+
   it('deduplicates theory leaves that diverge only after the selected depth', () => {
     const data = fixture('white', [
       ['d4', 'd5', 'Bf4', 'Nf6', 'e3', 'e6', 'Nf3'],
