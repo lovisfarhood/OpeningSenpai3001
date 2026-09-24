@@ -33,6 +33,13 @@ export interface PracticeItem {
   theoryLineageIds: readonly string[];
 }
 
+export interface CreatePracticeItemsOptions {
+  /** Use the complete path present in a pre-scoped graph instead of decision depth. */
+  boundary?: 'decision-depth' | 'scope-end';
+  /** Full stored theory used only to append the next repertoire response. */
+  continuationRepertoire?: CanonicalRepertoire;
+}
+
 export interface MovePracticeItem {
   id: string;
   openingId: string;
@@ -226,6 +233,20 @@ function practicePrefix(
   return prefix;
 }
 
+function finishAfterRepertoireMove(
+  repertoire: CanonicalRepertoire,
+  edgeIds: readonly string[],
+): string[] {
+  const prefix = [...edgeIds];
+  const endPosition = repertoire.edges[prefix.at(-1) ?? '']?.to;
+  if (!endPosition) return prefix;
+  if (repertoire.positions[endPosition]?.turn !== repertoireTurn(repertoire)) {
+    return prefix;
+  }
+  const response = activeRepertoireCandidate(repertoire, endPosition);
+  return response ? [...prefix, response.edgeId] : prefix;
+}
+
 /**
  * Builds one stable item per unique path visible at the configured depth.
  * Later theory branches and source-lineage order never affect item identity.
@@ -234,8 +255,10 @@ export function createPracticeItems(
   repertoire: CanonicalRepertoire,
   rootPosition = repertoire.rootPosition,
   trainingDepth = maximumPracticeDepth(repertoire, rootPosition),
+  options: CreatePracticeItemsOptions = {},
 ): PracticeItem[] {
   const normalizedDepth = Math.max(1, trainingDepth);
+  const executionRepertoire = options.continuationRepertoire ?? repertoire;
   const grouped = new Map<string, {
     prefix: string[];
     representative: CompleteTheoryLine;
@@ -243,9 +266,14 @@ export function createPracticeItems(
   }>();
 
   for (const theoryLine of completeTheoryLines(repertoire, rootPosition)) {
-    const prefix = practicePrefix(repertoire, theoryLine.edgeIds, normalizedDepth);
+    const nominalPrefix = options.boundary === 'scope-end'
+      ? theoryLine.edgeIds
+      : practicePrefix(repertoire, theoryLine.edgeIds, normalizedDepth);
+    const prefix = finishAfterRepertoireMove(executionRepertoire, nominalPrefix);
     if (prefix.length === 0) continue;
-    const signature = JSON.stringify(edgePathSignature(repertoire, prefix));
+    // Extension happens before grouping: the final trained path is the sole
+    // deduplication and identity boundary, never the formal scope cutoff.
+    const signature = JSON.stringify(edgePathSignature(executionRepertoire, prefix));
     const existing = grouped.get(signature);
     if (!existing) {
       grouped.set(signature, {
@@ -256,8 +284,8 @@ export function createPracticeItems(
       continue;
     }
     existing.lineageIds.add(theoryLine.lineageId);
-    const currentSignature = JSON.stringify(edgePathSignature(repertoire, existing.representative.edgeIds));
-    const candidateSignature = JSON.stringify(edgePathSignature(repertoire, theoryLine.edgeIds));
+    const currentSignature = JSON.stringify(edgePathSignature(executionRepertoire, existing.representative.edgeIds));
+    const candidateSignature = JSON.stringify(edgePathSignature(executionRepertoire, theoryLine.edgeIds));
     if (
       theoryLine.edgeIds.length > existing.representative.edgeIds.length ||
       (theoryLine.edgeIds.length === existing.representative.edgeIds.length && candidateSignature < currentSignature)
@@ -267,21 +295,22 @@ export function createPracticeItems(
   }
 
   return [...grouped.values()].map<PracticeItem>(({ prefix, representative, lineageIds }) => {
-    const endPosition = repertoire.edges[prefix.at(-1) ?? '']?.to ?? rootPosition;
+    const endPosition = executionRepertoire.edges[prefix.at(-1) ?? '']?.to ?? rootPosition;
+    const theoryEdgeIds = representative.edgeIds.length >= prefix.length
+      ? representative.edgeIds
+      : prefix;
     return {
-      id: stableId('practice-item-v2', [
+      id: stableId('practice-item-v3', [
         repertoire.openingId,
-        rootPosition,
-        normalizedDepth,
-        edgePathSignature(repertoire, prefix),
+        edgePathSignature(executionRepertoire, prefix),
       ]),
       openingId: repertoire.openingId,
       rootPosition,
       endPosition,
       trainingDepth: normalizedDepth,
       edgeIds: prefix,
-      sans: prefix.flatMap((id) => repertoire.edges[id]?.san ?? []),
-      theoryEdgeIds: representative.edgeIds,
+      sans: prefix.flatMap((id) => executionRepertoire.edges[id]?.san ?? []),
+      theoryEdgeIds,
       theoryLineageIds: [...lineageIds].sort((left, right) => left.localeCompare(right, 'en')),
     };
   }).sort((left, right) => left.id.localeCompare(right.id, 'en'));

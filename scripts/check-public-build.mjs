@@ -27,6 +27,38 @@ if (relativeFiles.some((file) => file === 'data' || file.startsWith(`data${path.
   throw new Error('Public build unexpectedly contains a data/ directory.');
 }
 
+const popularityDirectory = path.join(output, 'popularity');
+const popularityFiles = await readdir(popularityDirectory).catch(() => []);
+for (const name of popularityFiles) {
+  if (!name.endsWith('.json')) {
+    throw new Error(`Unexpected public popularity asset: ${name}`);
+  }
+  const file = path.join(popularityDirectory, name);
+  const pack = JSON.parse(await readFile(file, 'utf8'));
+  if (
+    !Array.isArray(pack.defaultRootPositions) ||
+    pack.defaultRootPositions.length !== 0 ||
+    !Array.isArray(pack.importanceOrder) ||
+    pack.importanceOrder.length !== 0
+  ) {
+    throw new Error(`Public popularity pack exposes repertoire structure: ${name}`);
+  }
+  if (
+    !pack.positionGames ||
+    Object.keys(pack.positionGames).some(
+      (key) => !/^position_[0-9a-f]{16}$/.test(key),
+    )
+  ) {
+    throw new Error(`Public popularity pack contains a non-opaque position key: ${name}`);
+  }
+  if (
+    !pack.edgeGames ||
+    Object.keys(pack.edgeGames).some((key) => !/^edge_[0-9a-f]{8}$/.test(key))
+  ) {
+    throw new Error(`Public popularity pack contains an unexpected edge key: ${name}`);
+  }
+}
+
 for (const file of files) {
   if ((await stat(file)).size > 20 * 1024 * 1024) {
     throw new Error(`Unexpectedly large public asset: ${path.relative(output, file)}`);
@@ -40,4 +72,4 @@ for (const file of files) {
   }
 }
 
-console.log(`Public build verified: ${files.length} shell assets, no bundled course data.`);
+console.log(`Public build verified: ${files.length} assets, sanitized popularity stats only, no bundled course data.`);
